@@ -1,0 +1,11 @@
+pip3 install -r verify-identity-src/requirements.txt -t verify-identity-src/verify_identity/build/
+cp verify-identity-src/verify_identity/*.py verify-identity-src/verify_identity/build/.
+
+pip3 install -r check-fraud-src/requirements.txt -t check-fraud-src/check_fraud/build/
+cp check-fraud-src/check_fraud/*.py check-fraud-src/check_fraud/build/.
+
+sam package \
+    --template-file template.yaml \
+    --output-template-file packaged.yaml \
+    --s3-bucket lend-left \
+    --s3-prefix lambdas/person

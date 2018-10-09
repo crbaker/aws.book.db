@@ -1,0 +1,17 @@
+pip3 install -r search-book-src/requirements.txt -t search-book-src/search_book/build/
+cp search-book-src/search_book/*.py search-book-src/search_book/build/.
+
+aws cloudformation package \
+    --template-file template.yaml \
+    --output-template-file packaged.yaml \
+    --s3-bucket book-db \
+    --s3-prefix lambdas/book \
+    --profile personal \
+    --region eu-central-1
+
+aws cloudformation deploy \
+    --template-file packaged.yaml \
+    --stack-name book-stack \
+    --capabilities CAPABILITY_IAM \
+    --profile personal \
+    --region eu-central-1

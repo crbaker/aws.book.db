@@ -1,0 +1,298 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+    Book
+
+    The lambdas that are responsible for searching for a book in the Google Book API.
+
+Resources:
+
+    APIRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: Allow
+                        Principal:
+                            Service: apigateway.amazonaws.com
+                        Action: sts:AssumeRole
+
+    RolePolicies:
+        Type: AWS::IAM::Policy
+        Properties:
+            PolicyName: "BookDeliveryPolicy"
+            PolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    -
+                        Effect: "Allow"
+                        Action: "*"
+                        Resource: "*"
+            Roles:
+                -
+                    Ref: "APIRole"
+
+    BookDeliveryApi:
+        Type: AWS::Serverless::Api
+        Properties:
+            StageName: Prod
+            DefinitionBody:
+                swagger: 2.0
+                info:
+                    title:
+                        Ref: AWS::StackName
+                paths:
+                    /book/{isbn}:
+                        get:
+                            produces:
+                            - "application/json"
+                            responses:
+                                "200":
+                                    description: "200 response"
+                                    schema:
+                                        $ref: "#/definitions/FindBook"
+                            x-amazon-apigateway-integration:
+                                credentials: !GetAtt APIRole.Arn
+                                uri: "arn:aws:apigateway:eu-central-1:dynamodb:action/GetItem"
+                                responses:
+                                    default:
+                                        statusCode: "200"
+                                        responseTemplates:
+                                            application/json: "#set($inputRoot = $input.path('$'))
+                                                                {
+                                                                #if($inputRoot.Item != '')
+                                                                #set($elem = $inputRoot.Item)
+                                                                #if($elem.reputation.S == 'conclusive')
+                                                                \"book\": {
+                                                                    \"isbn\": \"$elem.isbn.S\",
+                                                                    \"reputation\": \"$elem.reputation.S\",
+                                                                    \"description\":\"$util.escapeJavaScript($elem.volumeInfo.M.description.S).replaceAll(\"\\\\'\",\"'\")\",
+                                                                    \"title\":\"$util.escapeJavaScript($elem.volumeInfo.M.title.S).replaceAll(\"\\\\'\",\"'\")\",
+                                                                    \"subtitle\":\"$util.escapeJavaScript($elem.volumeInfo.M.subtitle.S).replaceAll(\"\\\\'\",\"'\")\",
+                                                                    \"authors\": [
+                                                                #foreach($author in $elem.volumeInfo.M.authors.L)
+                                                                    \"$author.S\" #if($foreach.hasNext),#end
+                                                                #end
+                                                                    ],
+                                                                    \"thumbnail\": \"$elem.volumeInfo.M.imageLinks.M.thumbnail.S\",
+                                                                    \"smallThumbnail\": \"$elem.volumeInfo.M.imageLinks.M.smallThumbnail.S\"
+                                                                }
+                                                                #end
+
+                                                                #if($elem.reputation.S == 'inconclusive')
+                                                                \"book\": {
+                                                                    \"isbn\": \"$elem.isbn.S\",
+                                                                    \"reputation\": \"$elem.reputation.S\"
+                                                                }
+                                                                #end
+                                                                #end
+                                                                }"
+                                        
+                                passthroughBehavior: "when_no_templates"
+                                httpMethod: "POST"
+                                requestTemplates:
+                                    application/json: "{\"TableName\":\"books\", \"Key\":{\"isbn\":{\"S\":\"$input.params('isbn')\"}}, \"ProjectionExpression\":\"isbn, volumeInfo.description, volumeInfo.title, volumeInfo.subtitle, volumeInfo.imageLinks, volumeInfo.authors, reputation\"}"
+                                type: "aws"                    
+                    /book:
+                        get:
+                            produces:
+                            - "application/json"
+                            responses:
+                                "200":
+                                    description: "200 response"
+                                    schema:
+                                        $ref: "#/definitions/AllBooks"
+                            x-amazon-apigateway-integration:
+                                credentials: !GetAtt APIRole.Arn
+                                uri: "arn:aws:apigateway:eu-central-1:dynamodb:action/Scan"
+                                responses:
+                                    default:
+                                        statusCode: "200"
+                                        responseTemplates:
+                                            application/json: "#set($inputRoot = $input.path('$'))
+                                                                {
+                                                                \"books\": [
+                                                                #foreach($elem in $inputRoot.Items)
+                                                                #if($elem.reputation.S == 'conclusive')
+                                                                {
+                                                                    \"isbn\": \"$elem.isbn.S\",
+                                                                    \"reputation\": \"$elem.reputation.S\",
+                                                                    \"description\":\"$util.escapeJavaScript($elem.volumeInfo.M.description.S).replaceAll(\"\\\\'\",\"'\")\",
+                                                                    \"title\":\"$util.escapeJavaScript($elem.volumeInfo.M.title.S).replaceAll(\"\\\\'\",\"'\")\",
+                                                                    \"subtitle\":\"$util.escapeJavaScript($elem.volumeInfo.M.subtitle.S).replaceAll(\"\\\\'\",\"'\")\",
+                                                                    \"authors\": [
+                                                                #foreach($author in $elem.volumeInfo.M.authors.L)
+                                                                        \"$author.S\" #if($foreach.hasNext),#end
+                                                                #end
+                                                                    ],
+                                                                    \"thumbnail\": \"$elem.volumeInfo.M.imageLinks.M.thumbnail.S\",
+                                                                    \"smallThumbnail\": \"$elem.volumeInfo.M.imageLinks.M.smallThumbnail.S\"
+                                                                    }#if($foreach.hasNext),#end
+                                                                #end
+                                                                #end
+                                                                ],
+                                                                \"inconclusive\":[
+                                                                    #foreach($elem in $inputRoot.Items)
+                                                                    #if($elem.reputation.S == 'inconclusive')
+                                                                    {
+                                                                        \"isbn\": \"$elem.isbn.S\",
+                                                                        \"reputation\": \"$elem.reputation.S\"
+                                                                        }#if($foreach.hasNext),#end
+                                                                    #end
+                                                                    #end
+                                                                ]
+                                                                }"
+                                passthroughBehavior: "when_no_templates"
+                                httpMethod: "POST"
+                                requestTemplates:
+                                    application/json: "{\"TableName\":\"books\", \"ProjectionExpression\":\"isbn, volumeInfo.description, volumeInfo.title, volumeInfo.subtitle, volumeInfo.imageLinks, volumeInfo.authors, reputation\"}"
+                                type: "aws"
+                        post:
+                            consumes:
+                            - "application/json"
+                            produces:
+                            - "application/json"
+                            parameters:
+                            -
+                                in: "body"
+                                name: "BookIdentifier"
+                                required: true
+                                schema:
+                                    $ref: "#/definitions/BookIdentifier"
+                            responses:
+                                "201":
+                                    description: "201 response"
+                            x-amazon-apigateway-request-validator: "Validate body"
+                            x-amazon-apigateway-integration:
+                                credentials: !GetAtt APIRole.Arn
+                                uri: "arn:aws:apigateway:eu-central-1:kinesis:action/PutRecord"
+                                responses:
+                                    default:
+                                        statusCode: "201"
+                                        responseTemplates:
+                                            application/json: "{}"
+                                passthroughBehavior: "when_no_templates"
+                                httpMethod: "POST"
+                                requestTemplates:
+                                    application/json: "{\n    \"Data\":\"$util.base64Encode(\"$input.json('$')\"\
+                                        )\",\n    \"PartitionKey\":\"1\",\n    \"StreamName\":\"book-received\"\
+                                        \n}"
+                                type: "aws"
+                definitions:
+                    BookIdentifier:
+                        type: "object"
+                        required:
+                        - "isbn"
+                        properties:
+                            isbn:
+                                type: "string"
+                        description: "A simple book object with just an ISBN"
+                    Book:
+                        type: "object"
+                        properties:
+                            isbn:
+                                type: "string"
+                            description:
+                                type: "string"
+                            title:
+                                type: "string"
+                            subtitle:
+                                type: "string"
+                            thumbnail:
+                                type: "string"
+                            smallThumbnail:
+                                type: "string"
+                            authors:
+                                type: "array"
+                                items:
+                                    type: "number"
+                    FindBook:
+                        type: "object"
+                        properties:
+                            book:
+                                "$ref": "#/definitions/Book"
+                    AllBooks:
+                        type: "object"
+                        properties:
+                            books:
+                                type: "array"
+                                items:
+                                    "$ref": "#/definitions/Book"
+                            inconclusive:
+                                type: "array"
+                                items:
+                                    "$ref": "#/definitions/BookIdentifier"
+                x-amazon-apigateway-request-validators:
+                    Basic:
+                        validateRequestParameters: false
+                        validateRequestBody: true                        
+                    Validate body:
+                        validateRequestParameters: false
+                        validateRequestBody: true
+
+    BookDeliveryAuthorizer:
+        Type: AWS::ApiGateway::Authorizer
+        Properties:
+            Name: "CognitoAuthorizer"
+            Type: "COGNITO_USER_POOLS"
+            IdentitySource: "method.request.header.Authorization"
+            RestApiId:
+                Ref: "BookDeliveryApi"
+            ProviderARNs:
+                - "arn:aws:cognito-idp:eu-central-1:111089241198:userpool/eu-central-1_azCwWZDgE"
+
+    BookReceivedStream:
+        Type: AWS::Kinesis::Stream
+        Properties:
+            Name: book-received
+            ShardCount: 1
+
+    SaveBookDynamo:
+        Type: AWS::DynamoDB::Table
+        Properties:
+            AttributeDefinitions:
+                -
+                    AttributeName: "isbn"
+                    AttributeType: "S"
+            KeySchema:
+                -
+                    AttributeName: "isbn"
+                    KeyType: "HASH"
+            ProvisionedThroughput:
+                ReadCapacityUnits: "5"
+                WriteCapacityUnits: "5"
+            TableName: "books"
+
+    SearchBookFunction:
+        Type: AWS::Serverless::Function
+        Properties:
+            CodeUri: search-book-src/search_book/build/
+            Handler: app.lambda_handler
+            Policies:
+                - AmazonDynamoDBFullAccess
+            Runtime: python3.6
+            Environment:
+                Variables:
+                    PARAM1: VALUE
+            Events:
+                BookReceivedKinesis:
+                    Type: Kinesis
+                    Properties:
+                        Stream:
+                            'Fn::GetAtt':
+                                - BookReceivedStream
+                                - Arn
+                        StartingPosition: TRIM_HORIZON
+                        BatchSize: 10
+
+Outputs:
+
+    SearchBookFunction:
+      Description: "Search Book Lambda Function ARN"
+      Value: !GetAtt SearchBookFunction.Arn
+
+    SearchBookFunctionIamRole:
+      Description: "Implicit IAM Role created for Search Book Function"
+      Value: !GetAtt SearchBookFunctionRole.Arn
