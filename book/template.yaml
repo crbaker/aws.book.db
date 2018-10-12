@@ -34,6 +34,34 @@ Resources:
                 -
                     Ref: "APIRole"
 
+    # BookIdentityPool:
+    #     Type: AWS::Cognito::IdentityPool
+    #     Properties:
+    #         IdentityPoolName: BookDbIdentityPool
+
+    BookUserPool:
+        Type: AWS::Cognito::UserPool
+        Properties:
+            UserPoolName: BookDbUserPool
+            # UsernameAttributes:
+            # - phone_number
+            # - email
+            AutoVerifiedAttributes:
+            - email
+            Schema:
+                -
+                    AttributeDataType: String
+                    Mutable: false
+                    Name: email
+                    Required: true
+            Policies:
+                PasswordPolicy:
+                    MinimumLength: 8
+                    RequireLowercase: true
+                    RequireSymbols: false
+                    RequireUppercase: false
+                    RequireNumbers: false
+
     BookDeliveryApi:
         Type: AWS::Serverless::Api
         Properties:
@@ -53,6 +81,8 @@ Resources:
                                     description: "200 response"
                                     schema:
                                         $ref: "#/definitions/FindBook"
+                            security:
+                                - CognitoAuthorizer: []
                             x-amazon-apigateway-integration:
                                 credentials: !GetAtt APIRole.Arn
                                 uri: "arn:aws:apigateway:eu-central-1:dynamodb:action/GetItem"
@@ -77,7 +107,9 @@ Resources:
                                                                 #end
                                                                     ],
                                                                     \"thumbnail\": \"$elem.volumeInfo.M.imageLinks.M.thumbnail.S\",
-                                                                    \"smallThumbnail\": \"$elem.volumeInfo.M.imageLinks.M.smallThumbnail.S\"
+                                                                    \"smallThumbnail\": \"$elem.volumeInfo.M.imageLinks.M.smallThumbnail.S\",
+                                                                    \"publishedDate\": \"$elem.volumeInfo.M.publishedDate.S\",
+                                                                    \"pageCount\": \"$elem.volumeInfo.M.pageCount.N\"
                                                                 }
                                                                 #end
 
@@ -93,7 +125,7 @@ Resources:
                                 passthroughBehavior: "when_no_templates"
                                 httpMethod: "POST"
                                 requestTemplates:
-                                    application/json: "{\"TableName\":\"books\", \"Key\":{\"isbn\":{\"S\":\"$input.params('isbn')\"}}, \"ProjectionExpression\":\"isbn, volumeInfo.description, volumeInfo.title, volumeInfo.subtitle, volumeInfo.imageLinks, volumeInfo.authors, reputation\"}"
+                                    application/json: "{\"TableName\":\"books\", \"Key\":{\"isbn\":{\"S\":\"$input.params('isbn')\"},\"subject\":{\"S\": \"$context.authorizer.claims['sub']\"}}, \"ProjectionExpression\":\"isbn, volumeInfo.description, volumeInfo.title, volumeInfo.subtitle, volumeInfo.imageLinks, volumeInfo.authors, volumeInfo.publishedDate, volumeInfo.pageCount, reputation\"}"
                                 type: "aws"                    
                     /book:
                         get:
@@ -104,6 +136,8 @@ Resources:
                                     description: "200 response"
                                     schema:
                                         $ref: "#/definitions/AllBooks"
+                            security:
+                                - CognitoAuthorizer: []
                             x-amazon-apigateway-integration:
                                 credentials: !GetAtt APIRole.Arn
                                 uri: "arn:aws:apigateway:eu-central-1:dynamodb:action/Scan"
@@ -128,7 +162,9 @@ Resources:
                                                                 #end
                                                                     ],
                                                                     \"thumbnail\": \"$elem.volumeInfo.M.imageLinks.M.thumbnail.S\",
-                                                                    \"smallThumbnail\": \"$elem.volumeInfo.M.imageLinks.M.smallThumbnail.S\"
+                                                                    \"smallThumbnail\": \"$elem.volumeInfo.M.imageLinks.M.smallThumbnail.S\",
+                                                                    \"publishedDate\": \"$elem.volumeInfo.M.publishedDate.S\",
+                                                                    \"pageCount\": \"$elem.volumeInfo.M.pageCount.N\"
                                                                     }#if($foreach.hasNext),#end
                                                                 #end
                                                                 #end
@@ -147,7 +183,7 @@ Resources:
                                 passthroughBehavior: "when_no_templates"
                                 httpMethod: "POST"
                                 requestTemplates:
-                                    application/json: "{\"TableName\":\"books\", \"ProjectionExpression\":\"isbn, volumeInfo.description, volumeInfo.title, volumeInfo.subtitle, volumeInfo.imageLinks, volumeInfo.authors, reputation\"}"
+                                    application/json: "{\"TableName\":\"books\", \"FilterExpression\": \"subject = :val\", \"ExpressionAttributeValues\": {\":val\": {\"S\": \"$context.authorizer.claims['sub']\"}}, \"ProjectionExpression\":\"isbn, volumeInfo.description, volumeInfo.title, volumeInfo.subtitle, volumeInfo.imageLinks, volumeInfo.authors, volumeInfo.publishedDate, volumeInfo.pageCount, reputation\"}"
                                 type: "aws"
                         post:
                             consumes:
@@ -164,6 +200,8 @@ Resources:
                             responses:
                                 "201":
                                     description: "201 response"
+                            security:
+                                - CognitoAuthorizer: []
                             x-amazon-apigateway-request-validator: "Validate body"
                             x-amazon-apigateway-integration:
                                 credentials: !GetAtt APIRole.Arn
@@ -176,10 +214,20 @@ Resources:
                                 passthroughBehavior: "when_no_templates"
                                 httpMethod: "POST"
                                 requestTemplates:
-                                    application/json: "{\n    \"Data\":\"$util.base64Encode(\"$input.json('$')\"\
+                                    application/json: "#set($input.path('$').sub = $context.authorizer.claims[\"sub\"]) #set($input.path('$').email = $context.authorizer.claims[\"email\"]){\n    \"Data\":\"$util.base64Encode(\"$input.json('$')\"\
                                         )\",\n    \"PartitionKey\":\"1\",\n    \"StreamName\":\"book-received\"\
                                         \n}"
                                 type: "aws"
+                securityDefinitions:
+                    CognitoAuthorizer:
+                        type: "apiKey"
+                        name: "Authorization"
+                        in: "header"
+                        x-amazon-apigateway-authtype: "cognito_user_pools"
+                        x-amazon-apigateway-authorizer:
+                            providerARNs:
+                            - !GetAtt BookUserPool.Arn
+                            type: "cognito_user_pools"
                 definitions:
                     BookIdentifier:
                         type: "object"
@@ -204,6 +252,10 @@ Resources:
                                 type: "string"
                             smallThumbnail:
                                 type: "string"
+                            publishedDate:
+                                type: "string"
+                            pageCount:
+                                type: "integer"                                
                             authors:
                                 type: "array"
                                 items:
@@ -232,17 +284,6 @@ Resources:
                         validateRequestParameters: false
                         validateRequestBody: true
 
-    BookDeliveryAuthorizer:
-        Type: AWS::ApiGateway::Authorizer
-        Properties:
-            Name: "CognitoAuthorizer"
-            Type: "COGNITO_USER_POOLS"
-            IdentitySource: "method.request.header.Authorization"
-            RestApiId:
-                Ref: "BookDeliveryApi"
-            ProviderARNs:
-                - "arn:aws:cognito-idp:eu-central-1:111089241198:userpool/eu-central-1_azCwWZDgE"
-
     BookReceivedStream:
         Type: AWS::Kinesis::Stream
         Properties:
@@ -256,10 +297,16 @@ Resources:
                 -
                     AttributeName: "isbn"
                     AttributeType: "S"
+                -
+                    AttributeName: "subject"
+                    AttributeType: "S"
             KeySchema:
                 -
                     AttributeName: "isbn"
                     KeyType: "HASH"
+                -
+                    AttributeName: "subject"
+                    KeyType: "RANGE"
             ProvisionedThroughput:
                 ReadCapacityUnits: "5"
                 WriteCapacityUnits: "5"
@@ -270,6 +317,7 @@ Resources:
         Properties:
             CodeUri: search-book-src/search_book/build/
             Handler: app.lambda_handler
+            Timeout: 30
             Policies:
                 - AmazonDynamoDBFullAccess
             Runtime: python3.6
